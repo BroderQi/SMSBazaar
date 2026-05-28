@@ -5,6 +5,7 @@ const {
   getAllProviderSnapshots,
   getAllProviderStates,
   getLatestRefreshEvent,
+  getProviderSnapshot,
   insertRefreshEvent,
   saveProviderSnapshot,
   saveProviderState,
@@ -16,6 +17,28 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
   let isRunning = false;
   let lastManualTriggerAt = 0;
   let currentPromise = null;
+
+  function getReusableProviderResult(mapping, reason) {
+    const minRefreshIntervalMs = Number(mapping.minRefreshIntervalMs || 0);
+    if (!minRefreshIntervalMs || reason === 'manual') return null;
+
+    const state = db.prepare('SELECT last_attempted_at, last_success_at FROM provider_states WHERE provider_key = ?').get(mapping.providerKey);
+    const lastAttempt = state?.last_attempted_at || state?.last_success_at;
+    if (!lastAttempt) return null;
+
+    const lastAttemptMs = new Date(lastAttempt).getTime();
+    if (!Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= minRefreshIntervalMs) return null;
+
+    const snapshot = getProviderSnapshot(db, mapping.providerKey);
+    if (!snapshot?.payload) return null;
+
+    return {
+      ...snapshot.payload,
+      providerKey: mapping.providerKey,
+      providerName: mapping.displayName,
+      skipped: true,
+    };
+  }
 
   async function runRefresh(reason = 'scheduled') {
     if (isRunning) {
@@ -42,6 +65,9 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
       await exchangeRateService.loadUsdRates(reason === 'manual');
 
       const results = await Promise.all(serviceConfig.providerMappings.map(async (mapping) => {
+        const reusableResult = getReusableProviderResult(mapping, reason);
+        if (reusableResult) return reusableResult;
+
         const provider = getProvider(mapping.providerKey);
         const apiKey = process.env[mapping.keyEnv] || '';
         const result = await provider.fetchProviderOffers({
@@ -137,6 +163,9 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
         await exchangeRateService.loadUsdRates(reason === 'manual');
 
         const results = await Promise.all(serviceConfig.providerMappings.map(async (mapping) => {
+          const reusableResult = getReusableProviderResult(mapping, reason);
+          if (reusableResult) return reusableResult;
+
           const provider = getProvider(mapping.providerKey);
           const apiKey = process.env[mapping.keyEnv] || '';
           const result = await provider.fetchProviderOffers({

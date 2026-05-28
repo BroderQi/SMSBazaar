@@ -155,6 +155,7 @@ module.exports = {
       nativeServiceName: process.env.SMSPOOL_NATIVE_SERVICE_NAME || 'OpenAI / ChatGPT',
       baseUrl: 'https://api.smspool.net',
       keyEnv: 'SMSPOOL_API_KEY',
+      minRefreshIntervalMs: Number(process.env.SMSPOOL_REFRESH_INTERVAL_MS || 180000),
     },
   ],
 };

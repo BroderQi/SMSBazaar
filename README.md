@@ -96,6 +96,7 @@ GRIZZLYSMS_SERVICE_CODE=dr
 SMS_VERIFICATION_SERVICE_CODE=dr
 SMSPOOL_SERVICE_CODE=671
 SMSPOOL_NATIVE_SERVICE_NAME=OpenAI / ChatGPT
+SMSPOOL_REFRESH_INTERVAL_MS=180000
 SMSPOOL_STOCK_MODE=country
 SMSPOOL_INCLUDE_POOL_NAMES=false
 ```
@@ -103,6 +104,8 @@ SMSPOOL_INCLUDE_POOL_NAMES=false
 SMSPool 使用官方原生 API：`/request/pricing` 获取价格档位，`/sms/stock` 获取库存。`SMSPOOL_SERVICE_CODE=671` 对应 `OpenAI / ChatGPT`；如果你的环境里仍保留旧的 `dr`，程序会通过 `SMSPOOL_NATIVE_SERVICE_NAME` 自动解析原生服务 ID。
 
 `SMSPOOL_STOCK_MODE=country` 表示每个国家查一次总库存，更适合 1 分钟定时刷新；如果改成 `pool`，会按价格池查询更细的档位库存，但请求量更高，可能触发 SMSPool 限流。
+
+`SMSPOOL_REFRESH_INTERVAL_MS=180000` 表示 SMSPool 单独每 3 分钟刷新一次，其它平台仍按全局 `REFRESH_INTERVAL_MS=60000` 刷新。这样可以保留页面 1 分钟更新，同时避开 SMSPool 的 120 秒限流窗口。
 
 ## 推荐国家配置
 
