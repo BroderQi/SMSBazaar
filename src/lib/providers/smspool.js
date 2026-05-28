@@ -140,6 +140,20 @@ async function fetchStock(baseUrl, countryId, serviceId, pool = '') {
   return Number(payload?.amount || 0);
 }
 
+async function fetchStockSafely(baseUrl, countryId, serviceId, pool = '') {
+  try {
+    return {
+      stock: await fetchStock(baseUrl, countryId, serviceId, pool),
+      errorMessage: '',
+    };
+  } catch (error) {
+    return {
+      stock: 0,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
   try {
     if (!apiKey) {
@@ -167,10 +181,12 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
       const tiers = stockMode === 'pool'
         ? await mapWithConcurrency(sortedTiers, 2, async (tier) => {
           const poolName = poolNames.get(tier.pool);
+          const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId, tier.pool);
           return {
             priceOriginal: tier.priceOriginal,
-            stock: await fetchStock(baseUrl, country.countryId, serviceId, tier.pool),
+            stock: stockResult.stock,
             providerRef: poolName ? `${tier.pool} ${poolName}` : tier.providerRef,
+            stockErrorMessage: stockResult.errorMessage,
           };
         })
         : sortedTiers.map((tier, index) => {
@@ -184,8 +200,11 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
         });
 
       if (stockMode !== 'pool' && tiers.length > 0) {
-        tiers[0].stock = await fetchStock(baseUrl, country.countryId, serviceId);
+        const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId);
+        tiers[0].stock = stockResult.stock;
+        tiers[0].stockErrorMessage = stockResult.errorMessage;
       }
+      const stockErrorMessage = tiers.find((tier) => tier.stockErrorMessage)?.stockErrorMessage || '';
 
       return makeOffer({
         providerKey: mapping.providerKey,
@@ -196,6 +215,8 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
         tiers,
         exchangeRateService,
         lastFetchedAt: now,
+        status: stockErrorMessage ? 'stale' : undefined,
+        errorMessage: stockErrorMessage ? 'SMSPool stock unavailable for this country; price is still shown.' : '',
         metadata: {
           nativeServiceId: serviceId,
           nativeCountryId: country.countryId,
