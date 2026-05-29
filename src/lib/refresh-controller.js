@@ -74,6 +74,7 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
           mapping,
           apiKey,
           exchangeRateService,
+          previousSnapshot: getProviderSnapshot(db, mapping.providerKey)?.payload || null,
         });
 
         const attemptedAt = new Date().toISOString();
@@ -173,6 +174,7 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
             mapping,
             apiKey,
             exchangeRateService,
+            previousSnapshot: getProviderSnapshot(db, mapping.providerKey)?.payload || null,
           });
 
           const attemptedAt = new Date().toISOString();

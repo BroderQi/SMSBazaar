@@ -160,4 +160,63 @@ describe('provider adapters', () => {
     expect(poolResult.offers[0].tiers[0].providerRef).toBe('3 / total stock');
     process.env.HERO_SMS_API_KEY = originalHeroApiKey;
   });
+
+  it('reuses cached SMSPool stock outside the rolling batch', async () => {
+    const previousStockBatchSize = process.env.SMSPOOL_STOCK_BATCH_SIZE;
+    process.env.SMSPOOL_STOCK_BATCH_SIZE = '1';
+    mockFetchSequence([
+      [
+        {
+          service: 671,
+          service_name: 'OpenAI / ChatGPT',
+          country: 68,
+          country_name: 'Brazil',
+          short_name: 'BR',
+          pool: 12,
+          price: '0.26',
+        },
+        {
+          service: 671,
+          service_name: 'OpenAI / ChatGPT',
+          country: 2,
+          country_name: 'United Kingdom',
+          short_name: 'GB',
+          pool: 3,
+          price: '0.07',
+        },
+      ],
+      { success: 1, amount: 100 },
+    ]);
+
+    const poolResult = await fetchSmsPool({
+      mapping: { providerKey: 'smspool', displayName: 'SMSPool', serviceCode: '671', baseUrl: 'https://api.smspool.net' },
+      exchangeRateService,
+      apiKey: 'key',
+      previousSnapshot: {
+        offers: [
+          {
+            countryIso2: 'BR',
+            inventoryTotal: 900,
+            lastFetchedAt: '2026-05-01T00:00:00.000Z',
+            metadata: { stockFetchedAt: '2026-05-01T00:00:00.000Z' },
+          },
+          {
+            countryIso2: 'GB',
+            inventoryTotal: 800,
+            lastFetchedAt: '2026-05-02T00:00:00.000Z',
+            metadata: { stockFetchedAt: '2026-05-02T00:00:00.000Z' },
+          },
+        ],
+      },
+    });
+
+    const br = poolResult.offers.find((offer) => offer.countryIso2 === 'BR');
+    const gb = poolResult.offers.find((offer) => offer.countryIso2 === 'GB');
+    expect(br.inventoryTotal).toBe(100);
+    expect(br.metadata.stockRefreshStatus).toBe('refreshed');
+    expect(gb.inventoryTotal).toBe(800);
+    expect(gb.metadata.stockRefreshStatus).toBe('cached');
+    expect(gb.status).toBe('in_stock');
+    process.env.SMSPOOL_STOCK_BATCH_SIZE = previousStockBatchSize;
+  });
 });

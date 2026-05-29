@@ -98,6 +98,7 @@ SMSPOOL_SERVICE_CODE=671
 SMSPOOL_NATIVE_SERVICE_NAME=OpenAI / ChatGPT
 SMSPOOL_REFRESH_INTERVAL_MS=180000
 SMSPOOL_STOCK_MODE=country
+SMSPOOL_STOCK_BATCH_SIZE=12
 SMSPOOL_INCLUDE_POOL_NAMES=false
 ```
 
@@ -106,6 +107,8 @@ SMSPool 使用官方原生 API：`/request/pricing` 获取价格档位，`/sms/s
 `SMSPOOL_STOCK_MODE=country` 表示每个国家查一次总库存，更适合 1 分钟定时刷新；如果改成 `pool`，会按价格池查询更细的档位库存，但请求量更高，可能触发 SMSPool 限流。
 
 `SMSPOOL_REFRESH_INTERVAL_MS=180000` 表示 SMSPool 单独每 3 分钟刷新一次，其它平台仍按全局 `REFRESH_INTERVAL_MS=60000` 刷新。这样可以保留页面 1 分钟更新，同时避开 SMSPool 的 120 秒限流窗口。
+
+`SMSPOOL_STOCK_BATCH_SIZE=12` 表示每次 SMSPool 真实刷新只查询 12 个国家的库存，其他国家沿用上一次成功库存；价格仍然全量刷新。这可以避免一次性查询 155 个国家库存导致 `429`。
 
 ## 推荐国家配置
 

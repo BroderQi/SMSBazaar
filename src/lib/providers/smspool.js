@@ -113,6 +113,38 @@ function groupPricingByCountry(pricingRows) {
   return Array.from(countries.values());
 }
 
+function getPreviousOfferMap(previousSnapshot) {
+  const offers = Array.isArray(previousSnapshot?.offers) ? previousSnapshot.offers : [];
+  return new Map(offers
+    .filter((offer) => offer.countryIso2)
+    .map((offer) => [offer.countryIso2, offer]));
+}
+
+function getNextStockBatch(countries, previousOfferMap, batchSize) {
+  return countries
+    .slice()
+    .sort((left, right) => {
+      const leftOffer = previousOfferMap.get(left.countryIso2);
+      const rightOffer = previousOfferMap.get(right.countryIso2);
+      const leftFetchedAt = leftOffer?.metadata?.stockFetchedAt || '';
+      const rightFetchedAt = rightOffer?.metadata?.stockFetchedAt || '';
+      return leftFetchedAt.localeCompare(rightFetchedAt) || left.countryIso2.localeCompare(right.countryIso2);
+    })
+    .slice(0, batchSize);
+}
+
+function getPreviousStock(previousOffer) {
+  if (!previousOffer) return {
+    inventoryTotal: 0,
+    stockFetchedAt: '',
+  };
+
+  return {
+    inventoryTotal: Number(previousOffer.inventoryTotal || 0),
+    stockFetchedAt: previousOffer.metadata?.stockFetchedAt || previousOffer.lastFetchedAt || '',
+  };
+}
+
 async function fetchPoolNames(baseUrl, countryId, serviceId) {
   try {
     const payload = await postJson(baseUrl, '/pool/retrieve_valid', {
@@ -154,7 +186,12 @@ async function fetchStockSafely(baseUrl, countryId, serviceId, pool = '') {
   }
 }
 
-async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
+async function fetchProviderOffers({
+  mapping,
+  exchangeRateService,
+  apiKey,
+  previousSnapshot,
+}) {
   try {
     if (!apiKey) {
       throw new Error('Missing API key');
@@ -170,6 +207,10 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
     const now = new Date().toISOString();
     const includePoolNames = String(process.env.SMSPOOL_INCLUDE_POOL_NAMES || '').toLowerCase() === 'true';
     const stockMode = String(process.env.SMSPOOL_STOCK_MODE || 'country').toLowerCase();
+    const stockBatchSize = Math.max(1, Number(process.env.SMSPOOL_STOCK_BATCH_SIZE || 12));
+    const previousOfferMap = getPreviousOfferMap(previousSnapshot);
+    const stockBatch = new Set(getNextStockBatch(countries, previousOfferMap, stockBatchSize)
+      .map((country) => country.countryIso2));
 
     const offers = await mapWithConcurrency(countries, 3, async (country) => {
       const poolNames = includePoolNames
@@ -181,7 +222,9 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
       const tiers = stockMode === 'pool'
         ? await mapWithConcurrency(sortedTiers, 2, async (tier) => {
           const poolName = poolNames.get(tier.pool);
-          const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId, tier.pool);
+          const stockResult = stockBatch.has(country.countryIso2)
+            ? await fetchStockSafely(baseUrl, country.countryId, serviceId, tier.pool)
+            : { stock: 0, errorMessage: '' };
           return {
             priceOriginal: tier.priceOriginal,
             stock: stockResult.stock,
@@ -199,12 +242,28 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
           };
         });
 
+      const previousOffer = previousOfferMap.get(country.countryIso2);
+      const previousStock = getPreviousStock(previousOffer);
+      let inventoryTotal = previousStock.inventoryTotal;
+      let stockFetchedAt = previousStock.stockFetchedAt;
+      let stockErrorMessage = '';
+
       if (stockMode !== 'pool' && tiers.length > 0) {
-        const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId);
-        tiers[0].stock = stockResult.stock;
-        tiers[0].stockErrorMessage = stockResult.errorMessage;
+        if (stockBatch.has(country.countryIso2)) {
+          const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId);
+          inventoryTotal = stockResult.stock;
+          stockFetchedAt = stockResult.errorMessage ? stockFetchedAt : now;
+          stockErrorMessage = stockResult.errorMessage;
+        }
+        tiers[0].stock = inventoryTotal;
+        tiers[0].providerRef = stockBatch.has(country.countryIso2)
+          ? tiers[0].providerRef
+          : `${tiers[0].providerRef} / cached stock`;
       }
-      const stockErrorMessage = tiers.find((tier) => tier.stockErrorMessage)?.stockErrorMessage || '';
+      if (stockMode === 'pool') {
+        stockErrorMessage = tiers.find((tier) => tier.stockErrorMessage)?.stockErrorMessage || '';
+      }
+      const status = inventoryTotal > 0 ? 'in_stock' : 'out_of_stock';
 
       return makeOffer({
         providerKey: mapping.providerKey,
@@ -215,11 +274,13 @@ async function fetchProviderOffers({ mapping, exchangeRateService, apiKey }) {
         tiers,
         exchangeRateService,
         lastFetchedAt: now,
-        status: stockErrorMessage ? 'stale' : undefined,
-        errorMessage: stockErrorMessage ? 'SMSPool stock unavailable for this country; price is still shown.' : '',
+        status,
+        errorMessage: '',
         metadata: {
           nativeServiceId: serviceId,
           nativeCountryId: country.countryId,
+          stockFetchedAt,
+          stockRefreshStatus: stockErrorMessage ? 'failed' : (stockBatch.has(country.countryIso2) ? 'refreshed' : 'cached'),
         },
       });
     });
