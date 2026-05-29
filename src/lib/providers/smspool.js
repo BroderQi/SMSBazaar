@@ -158,8 +158,9 @@ async function fetchPoolNames(baseUrl, countryId, serviceId) {
   }
 }
 
-async function fetchStock(baseUrl, countryId, serviceId, pool = '') {
+async function fetchStock(baseUrl, apiKey, countryId, serviceId, pool = '') {
   const payload = await postJson(baseUrl, '/sms/stock', {
+    key: apiKey,
     country: countryId,
     service: serviceId,
     pool,
@@ -172,10 +173,10 @@ async function fetchStock(baseUrl, countryId, serviceId, pool = '') {
   return Number(payload?.amount || 0);
 }
 
-async function fetchStockSafely(baseUrl, countryId, serviceId, pool = '') {
+async function fetchStockSafely(baseUrl, apiKey, countryId, serviceId, pool = '') {
   try {
     return {
-      stock: await fetchStock(baseUrl, countryId, serviceId, pool),
+      stock: await fetchStock(baseUrl, apiKey, countryId, serviceId, pool),
       errorMessage: '',
     };
   } catch (error) {
@@ -207,7 +208,7 @@ async function fetchProviderOffers({
     const now = new Date().toISOString();
     const includePoolNames = String(process.env.SMSPOOL_INCLUDE_POOL_NAMES || '').toLowerCase() === 'true';
     const stockMode = String(process.env.SMSPOOL_STOCK_MODE || 'country').toLowerCase();
-    const stockBatchSize = Math.max(1, Number(process.env.SMSPOOL_STOCK_BATCH_SIZE || 12));
+    const stockBatchSize = Math.max(1, Number(process.env.SMSPOOL_STOCK_BATCH_SIZE || 20));
     const previousOfferMap = getPreviousOfferMap(previousSnapshot);
     const stockBatch = new Set(getNextStockBatch(countries, previousOfferMap, stockBatchSize)
       .map((country) => country.countryIso2));
@@ -223,7 +224,7 @@ async function fetchProviderOffers({
         ? await mapWithConcurrency(sortedTiers, 2, async (tier) => {
           const poolName = poolNames.get(tier.pool);
           const stockResult = stockBatch.has(country.countryIso2)
-            ? await fetchStockSafely(baseUrl, country.countryId, serviceId, tier.pool)
+            ? await fetchStockSafely(baseUrl, apiKey, country.countryId, serviceId, tier.pool)
             : { stock: 0, errorMessage: '' };
           return {
             priceOriginal: tier.priceOriginal,
@@ -250,7 +251,7 @@ async function fetchProviderOffers({
 
       if (stockMode !== 'pool' && tiers.length > 0) {
         if (stockBatch.has(country.countryIso2)) {
-          const stockResult = await fetchStockSafely(baseUrl, country.countryId, serviceId);
+          const stockResult = await fetchStockSafely(baseUrl, apiKey, country.countryId, serviceId);
           inventoryTotal = stockResult.stock;
           stockFetchedAt = stockResult.errorMessage ? stockFetchedAt : now;
           stockErrorMessage = stockResult.errorMessage;
