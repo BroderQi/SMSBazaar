@@ -20,7 +20,7 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
 
   function getReusableProviderResult(mapping, reason) {
     const minRefreshIntervalMs = Number(mapping.minRefreshIntervalMs || 0);
-    if (!minRefreshIntervalMs || reason === 'manual') return null;
+    if (!minRefreshIntervalMs) return null;
 
     const state = db.prepare('SELECT last_attempted_at, last_success_at FROM provider_states WHERE provider_key = ?').get(mapping.providerKey);
     const lastAttempt = state?.last_attempted_at || state?.last_success_at;
@@ -106,6 +106,7 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
           providerKey: result.providerKey,
           error: result.error,
           offerCount: result.offers?.length || 0,
+          skipped: Boolean(result.skipped),
         })),
       });
       return { accepted: true, status: 'success' };
@@ -204,6 +205,7 @@ function createRefreshController({ db, exchangeRateService, serviceConfig, refre
             providerKey: result.providerKey,
             error: result.error,
             offerCount: result.offers?.length || 0,
+            skipped: Boolean(result.skipped),
           })),
         });
       } catch (error) {
