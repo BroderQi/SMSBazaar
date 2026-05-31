@@ -140,10 +140,10 @@ function ThemeIcon({ theme }) {
   );
 }
 
-function GithubIcon() {
+function TelegramIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 .9a11.1 11.1 0 0 0-3.5 21.6c.55.1.75-.24.75-.53v-2c-3.05.67-3.7-1.3-3.7-1.3-.5-1.25-1.22-1.58-1.22-1.58-1-.68.08-.67.08-.67 1.1.08 1.68 1.14 1.68 1.14.98 1.68 2.58 1.2 3.2.92.1-.72.38-1.2.7-1.48-2.43-.28-5-1.22-5-5.42 0-1.2.43-2.18 1.13-2.95-.12-.28-.5-1.4.1-2.9 0 0 .93-.3 3.05 1.13A10.6 10.6 0 0 1 12 6.48c.94 0 1.9.13 2.78.38 2.12-1.43 3.05-1.13 3.05-1.13.6 1.5.22 2.62.1 2.9.7.77 1.13 1.75 1.13 2.95 0 4.22-2.58 5.14-5.03 5.4.4.35.75 1.03.75 2.08v3.08c0 .3.2.63.76.52A11.1 11.1 0 0 0 12 .9Z" />
+      <path d="M21.9 4.2 18.7 19c-.24 1.06-.88 1.32-1.78.82l-4.9-3.62-2.36 2.28c-.26.26-.48.48-.98.48l.35-5 9.1-8.22c.4-.35-.08-.55-.62-.2L6.25 12.63 1.4 11.12C.35 10.78.33 10.07 1.62 9.57L20.6 2.26c.88-.33 1.65.2 1.3 1.94Z" />
     </svg>
   );
 }
@@ -440,31 +440,18 @@ function App() {
       </div>
 
       <div className="panel card">
-        <div className="project-links" aria-label="GitHub 项目入口">
+        <div className="project-links" aria-label="Telegram 交流群">
           <a
             className="project-link"
-            href="https://github.com/FoundZiGu/GuJumpgate"
+            href="https://t.me/+FpvjaLW_x1RjNDI1"
             target="_blank"
             rel="noreferrer"
-            title="全自动 GPT Plus 注册浏览器扩展开源地址"
+            title="Telegram 交流群"
           >
-            <GithubIcon />
+            <TelegramIcon />
             <span>
-              <strong>全自动 GPT Plus 注册浏览器扩展</strong>
-              <small>FoundZiGu/GuJumpgate</small>
-            </span>
-          </a>
-          <a
-            className="project-link"
-            href="https://github.com/FoundZiGu/SMSBazaar"
-            target="_blank"
-            rel="noreferrer"
-            title="本项目开源地址"
-          >
-            <GithubIcon />
-            <span>
-              <strong>本项目开源地址</strong>
-              <small>FoundZiGu/SMSBazaar</small>
+              <strong>TG交流群</strong>
+              <small>https://t.me/+FpvjaLW_x1RjNDI1</small>
             </span>
           </a>
         </div>
