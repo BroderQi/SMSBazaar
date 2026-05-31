@@ -2,7 +2,7 @@
   "name": "smsbazaar",
   "version": "1.0.0",
   "private": true,
-  "description": "OPENAI(ChatGPT) SMS provider price and stock comparison dashboard",
+  "description": "SMS provider price and stock comparison dashboard",
   "homepage": "https://sms.fur.li/",
   "scripts": {
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",

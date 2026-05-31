@@ -18,6 +18,7 @@ function aggregateByCountry({
   recommendedWhitelist,
   recommendationPathByIso2,
   openAiSupportedWhitelist,
+  registerSupportedWhitelist,
 }) {
   const rows = new Map();
   const providerFilter = filters.provider ? String(filters.provider).toLowerCase() : '';
@@ -26,14 +27,14 @@ function aggregateByCountry({
   const whitelistSet = new Set((whitelist || []).map((value) => String(value).toUpperCase()));
   const recommendedSet = new Set((recommendedWhitelist || []).map((value) => String(value).toUpperCase()));
   const recommendationMap = recommendationPathByIso2 || new Map();
-  const openAiSupportedSet = new Set((openAiSupportedWhitelist || []).map((value) => String(value).toUpperCase()));
+  const registerSupportedSet = new Set((registerSupportedWhitelist || openAiSupportedWhitelist || []).map((value) => String(value).toUpperCase()));
 
   for (const snapshot of snapshots) {
     const providerState = states.get(snapshot.providerKey);
     for (const offer of snapshot.payload.offers || []) {
       const materializedOffer = applyStateToOffer(offer, providerState);
       if (!materializedOffer.countryIso2) continue;
-      if (filters.mode === 'register' && openAiSupportedSet.size > 0 && !openAiSupportedSet.has(materializedOffer.countryIso2)) continue;
+      if (filters.mode === 'register' && registerSupportedSet.size > 0 && !registerSupportedSet.has(materializedOffer.countryIso2)) continue;
       if (filters.mode === 'bind' && !whitelistSet.has(materializedOffer.countryIso2)) continue;
       if (filters.mode === 'recommended' && !recommendedSet.has(materializedOffer.countryIso2)) continue;
       if (countryFilter && materializedOffer.countryIso2 !== countryFilter) continue;

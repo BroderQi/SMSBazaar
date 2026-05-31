@@ -1,6 +1,6 @@
 # SMSBazaar
 
-SMSBazaar 是一个用于对比 `OPENAI(ChatGPT)` 短信接码价格和库存的单页面看板。
+SMSBazaar 是一个用于对比多种服务短信接码价格和库存的单页面看板，默认支持 `OPENAI(ChatGPT)`、`PayPal`、`Gojek / GoPay` 服务切换。
 
 项目通过服务端定时拉取多家短信平台 API，把不同平台的国家、价格、库存统一归一化，然后在前端按国家维度展示最低价、总库存、在线平台数和各平台明细。
 
@@ -8,7 +8,7 @@ SMSBazaar 是一个用于对比 `OPENAI(ChatGPT)` 短信接码价格和库存的
 
 ## 功能特性
 
-- 固定对比 `OPENAI(ChatGPT)` 服务的接码价格和库存。
+- 支持通过标签切换服务比价，目前内置 `OPENAI(ChatGPT)`、`PayPal`、`Gojek / GoPay`。
 - 已接入 7 家短信平台：Hero SMS、SMSBower、5sim、NexSMS、GrizzlySMS、SMS Verification Number、SMSPool。
 - 国家统一使用 ISO2 做主键，解决各平台国家 ID 不一致的问题。
 - 国家名称显示为中文名，后面带英文名。
@@ -67,6 +67,7 @@ REFRESH_INTERVAL_MS=60000
 REFRESH_COOLDOWN_MS=30000
 DATABASE_PATH=./data/app.sqlite
 EXCHANGE_RATE_URL=https://api.frankfurter.app/latest?from=USD
+DEFAULT_SERVICE_KEY=openai_chatgpt
 RECOMMENDED_COUNTRY_PATHS_FILE=./data/recommended-country-paths.txt
 OPENAI_SUPPORTED_COUNTRIES_FILE=./data/openai-supported-api-countries.txt
 ADMIN_REFRESH_TOKEN=
@@ -88,6 +89,7 @@ SMSPOOL_API_KEY=
 平台服务码也可以通过环境变量覆盖：
 
 ```env
+# 兼容旧配置：这些变量仍用于 OpenAI。
 HERO_SMS_SERVICE_CODE=dr
 SMSBOWER_SERVICE_CODE=dr
 FIVESIM_SERVICE_CODE=openai
@@ -101,6 +103,24 @@ SMSPOOL_STOCK_MODE=country
 SMSPOOL_STOCK_BATCH_SIZE=20
 SMSPOOL_INCLUDE_POOL_NAMES=false
 ```
+
+也可以使用新的按服务分组的覆盖变量，更适合继续增加服务：
+
+```env
+OPENAI_SMSBOWER_SERVICE_CODE=dr
+PAYPAL_SMSBOWER_SERVICE_CODE=ts
+PAYPAL_FIVESIM_SERVICE_CODE=paypal
+GOJEK_GOPAY_SMSBOWER_SERVICE_CODE=ni
+GOJEK_GOPAY_FIVESIM_SERVICE_CODE=gojek
+GOJEK_GOPAY_SMSPOOL_SERVICE_CODE=392
+GOJEK_GOPAY_SMSPOOL_NATIVE_SERVICE_NAME=GoJek
+```
+
+默认服务码说明：
+
+- PayPal：SMS-Activate 兼容平台默认 `ts`，5SIM 默认 `paypal`。
+- Gojek / GoPay：SMS-Activate 兼容平台默认 `ni`，5SIM 默认 `gojek`，SMSPool 默认 `392`。
+- SMSPool 当前公开服务列表未查到 PayPal，因此 PayPal 默认不启用 SMSPool；如果你有可用 ID，可配置 `PAYPAL_SMSPOOL_SERVICE_CODE`。
 
 SMSPool 使用官方原生 API：`/request/pricing` 获取价格档位，`/sms/stock` 获取库存。`SMSPOOL_SERVICE_CODE=671` 对应 `OpenAI / ChatGPT`；如果你的环境里仍保留旧的 `dr`，程序会通过 `SMSPOOL_NATIVE_SERVICE_NAME` 自动解析原生服务 ID。
 
@@ -143,8 +163,9 @@ PH 0
 ## API
 
 ```http
-GET /api/meta
-GET /api/compare?mode=register|bind|recommended&country=US&provider=smsbower&status=in_stock&sort=price_asc
+GET /api/meta?service=openai_chatgpt
+GET /api/compare?service=openai_chatgpt&mode=register|bind|recommended&country=US&provider=smsbower&status=in_stock&sort=price_asc
+GET /api/compare?service=paypal&mode=all&country=US&provider=smsbower&status=in_stock&sort=price_asc
 POST /api/refresh
 ```
 

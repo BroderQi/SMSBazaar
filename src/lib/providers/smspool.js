@@ -57,19 +57,30 @@ function isNumericServiceCode(serviceCode) {
   return /^\d+$/.test(String(serviceCode || '').trim());
 }
 
-function findNativeServiceId(services, mapping) {
-  const configuredName = String(mapping.nativeServiceName || '').trim().toLowerCase();
-  const fallbackPattern = /openai|chatgpt/i;
+function normalizeServiceName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
 
-  const exact = services.find((service) => (
-    configuredName
-      && String(service.name || service.service_name || '').trim().toLowerCase() === configuredName
-  ));
+function findNativeServiceId(services, mapping) {
+  const candidates = [
+    mapping.nativeServiceName,
+    mapping.serviceCode,
+    mapping.displayName,
+  ].map(normalizeServiceName).filter(Boolean);
+
+  const exact = services.find((service) => {
+    const name = normalizeServiceName(service.name || service.service_name || service.title || '');
+    return candidates.includes(name);
+  });
   if (exact) return String(exact.ID || exact.id || exact.service || '');
 
-  const fuzzy = services.find((service) => (
-    fallbackPattern.test(String(service.name || service.service_name || service.title || ''))
-  ));
+  const fuzzy = services.find((service) => {
+    const name = normalizeServiceName(service.name || service.service_name || service.title || '');
+    return candidates.some((candidate) => name.includes(candidate) || candidate.includes(name));
+  });
   return fuzzy ? String(fuzzy.ID || fuzzy.id || fuzzy.service || '') : '';
 }
 
@@ -82,7 +93,7 @@ async function resolveServiceId(baseUrl, mapping) {
   const serviceList = Array.isArray(services) ? services : [];
   const serviceId = findNativeServiceId(serviceList, mapping);
   if (!serviceId) {
-    throw new Error(`SMSPool native service not found for ${mapping.serviceCode || mapping.nativeServiceName || 'OpenAI / ChatGPT'}`);
+    throw new Error(`SMSPool native service not found for ${mapping.serviceCode || mapping.nativeServiceName || mapping.displayName || 'configured service'}`);
   }
   return serviceId;
 }

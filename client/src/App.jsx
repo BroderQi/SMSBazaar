@@ -49,6 +49,26 @@ function getRecommendationPathLabel(pathCode) {
   return '-';
 }
 
+function getModeLabel(mode) {
+  const labels = {
+    all: '全部国家',
+    register: '先手机号注册 OAuth',
+    bind: '后手机号绑定 OAuth',
+    recommended: '目前推荐国家(自测)',
+  };
+  return labels[mode.value] || mode.label || mode.value;
+}
+
+function getModeDescription(mode) {
+  const descriptions = {
+    all: '该服务返回的所有国家',
+    register: 'OPENAI支持的国家地区',
+    bind: '无WhatsAPP国家',
+    recommended: '推荐白名单',
+  };
+  return descriptions[mode.value] || mode.description || '';
+}
+
 function FlagIcon({ iso2, alt }) {
   const src = getFlagImageUrl(iso2);
   if (!src) {
@@ -130,6 +150,7 @@ function GithubIcon() {
 
 function getStoredThemePreference() {
   if (typeof window === 'undefined') return 'system';
+  if (!window.localStorage || typeof window.localStorage.getItem !== 'function') return 'system';
   const stored = window.localStorage.getItem('themePreference');
   return THEME_OPTIONS.includes(stored) ? stored : 'system';
 }
@@ -242,6 +263,7 @@ function App() {
   const [expanded, setExpanded] = useState({});
   const [tierExpanded, setTierExpanded] = useState({});
   const [filters, setFilters] = useState({
+    service: 'openai_chatgpt',
     mode: 'register',
     country: '',
     provider: '',
@@ -251,17 +273,20 @@ function App() {
 
   useEffect(() => {
     const root = document.documentElement;
+    const storage = window.localStorage && typeof window.localStorage.setItem === 'function'
+      ? window.localStorage
+      : null;
     if (themePreference === 'system') {
       root.removeAttribute('data-theme');
-      window.localStorage.removeItem('themePreference');
+      if (storage && typeof storage.removeItem === 'function') storage.removeItem('themePreference');
       return;
     }
     root.dataset.theme = themePreference;
-    window.localStorage.setItem('themePreference', themePreference);
+    if (storage) storage.setItem('themePreference', themePreference);
   }, [themePreference]);
 
-  async function loadMeta() {
-    const response = await fetch('/api/meta');
+  async function loadMeta(serviceKey = filters.service) {
+    const response = await fetch(`/api/meta?${new URLSearchParams({ service: serviceKey }).toString()}`);
     if (!response.ok) throw new Error('加载元数据失败');
     const payload = await response.json();
     setMeta(payload);
@@ -283,7 +308,7 @@ function App() {
         setLoading(true);
         setError('');
         const [metaResponse, compareResponse] = await Promise.all([
-          fetch('/api/meta'),
+          fetch(`/api/meta?${new URLSearchParams({ service: filters.service }).toString()}`),
           fetch(`/api/compare?${new URLSearchParams(filters).toString()}`),
         ]);
         if (!metaResponse.ok || !compareResponse.ok) {
@@ -316,10 +341,20 @@ function App() {
       try {
         setError('');
         const params = new URLSearchParams(filters);
-        const response = await fetch(`/api/compare?${params.toString()}`);
-        if (!response.ok) throw new Error('筛选刷新失败');
-        const payload = await response.json();
-        if (!cancelled) setCompare(payload);
+        const metaParams = new URLSearchParams({ service: filters.service });
+        const [metaResponse, compareResponse] = await Promise.all([
+          fetch(`/api/meta?${metaParams.toString()}`),
+          fetch(`/api/compare?${params.toString()}`),
+        ]);
+        if (!metaResponse.ok || !compareResponse.ok) throw new Error('筛选刷新失败');
+        const [metaPayload, comparePayload] = await Promise.all([
+          metaResponse.json(),
+          compareResponse.json(),
+        ]);
+        if (!cancelled) {
+          setMeta(metaPayload);
+          setCompare(comparePayload);
+        }
       } catch (filterError) {
         if (!cancelled) setError(filterError.message);
       }
@@ -328,8 +363,11 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [filters.mode, filters.country, filters.provider, filters.status, filters.sort, meta]);
+  }, [filters.service, filters.mode, filters.country, filters.provider, filters.status, filters.sort]);
 
+  const serviceOptions = meta?.services || [];
+  const selectedService = meta?.service || {};
+  const modeOptions = selectedService.modes || [];
   const providerOptions = useMemo(() => (meta?.providers || []).map((provider) => ({
     value: provider.providerKey,
     label: provider.displayName,
@@ -340,6 +378,18 @@ function App() {
     countryCount: compare.rows?.length || 0,
     providerCount: meta?.providers?.length || 0,
   }), [compare.rows, meta]);
+
+  function selectService(service) {
+    setExpanded({});
+    setTierExpanded({});
+    setFilters((current) => ({
+      ...current,
+      service: service.serviceKey,
+      mode: service.defaultMode || 'all',
+      country: '',
+      provider: '',
+    }));
+  }
 
   const themeTitle = `主题：${THEME_LABELS[themePreference]}，点击切换`;
 
@@ -366,7 +416,7 @@ function App() {
 
       <div className="hero-bar">
         <div>
-          <p className="eyebrow">Realtime snapshot across 7 providers</p>
+          <p className="eyebrow">Realtime snapshot across {summary.providerCount} providers</p>
           <h1>{meta?.service?.displayName} 短信价格对比</h1>
         </div>
         <div className="hero-meta">
@@ -419,6 +469,21 @@ function App() {
           </a>
         </div>
 
+        <div className="service-tabs" role="tablist" aria-label="服务">
+          {serviceOptions.map((service) => (
+            <button
+              key={service.serviceKey}
+              type="button"
+              role="tab"
+              aria-selected={filters.service === service.serviceKey}
+              className={filters.service === service.serviceKey ? 'service-tabs__button is-active' : 'service-tabs__button'}
+              onClick={() => selectService(service)}
+            >
+              {service.displayName}
+            </button>
+          ))}
+        </div>
+
         <div className="toolbar">
           <label>
             国家
@@ -456,30 +521,17 @@ function App() {
         </div>
 
         <div className="mode-switch">
-          <button
-            type="button"
-            className={filters.mode === 'register' ? 'mode-switch__button is-active' : 'mode-switch__button'}
-            onClick={() => setFilters((current) => ({ ...current, mode: 'register' }))}
-          >
-            先手机号注册 OAuth
-            <small>OPENAI支持的国家地区</small>
-          </button>
-          <button
-            type="button"
-            className={filters.mode === 'bind' ? 'mode-switch__button is-active' : 'mode-switch__button'}
-            onClick={() => setFilters((current) => ({ ...current, mode: 'bind' }))}
-          >
-            后手机号绑定 OAuth
-            <small>无WhatsAPP国家</small>
-          </button>
-          <button
-            type="button"
-            className={filters.mode === 'recommended' ? 'mode-switch__button is-active' : 'mode-switch__button'}
-            onClick={() => setFilters((current) => ({ ...current, mode: 'recommended' }))}
-          >
-            目前推荐国家(自测)
-            <small>推荐白名单</small>
-          </button>
+          {modeOptions.map((mode) => (
+            <button
+              key={mode.value}
+              type="button"
+              className={filters.mode === mode.value ? 'mode-switch__button is-active' : 'mode-switch__button'}
+              onClick={() => setFilters((current) => ({ ...current, mode: mode.value, country: '' }))}
+            >
+              {getModeLabel(mode)}
+              <small>{getModeDescription(mode)}</small>
+            </button>
+          ))}
         </div>
 
         {error ? <div className="error-banner">{error}</div> : null}

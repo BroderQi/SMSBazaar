@@ -7,13 +7,35 @@ describe('App', () => {
   beforeEach(() => {
     let compareCalls = 0;
     global.fetch = vi.fn(async (url, options) => {
-      if (url === '/api/meta') {
+      if (String(url).startsWith('/api/meta')) {
+        const requestUrl = new URL(String(url), 'http://localhost');
+        const serviceKey = requestUrl.searchParams.get('service') || 'openai_chatgpt';
+        const services = [
+          {
+            serviceKey: 'openai_chatgpt',
+            displayName: 'OPENAI (ChatGPT)',
+            defaultMode: 'register',
+            modes: [
+              { value: 'register', label: 'Register OAuth', description: 'OpenAI supported countries' },
+              { value: 'bind', label: 'Bind OAuth', description: 'Configured bind whitelist' },
+              { value: 'recommended', label: 'Recommended', description: 'Configured recommended countries' },
+            ],
+          },
+          {
+            serviceKey: 'paypal',
+            displayName: 'PayPal',
+            defaultMode: 'all',
+            modes: [{ value: 'all', label: 'All countries', description: 'All countries returned by providers' }],
+          },
+        ];
+        const service = services.find((entry) => entry.serviceKey === serviceKey) || services[0];
         return {
           ok: true,
           json: async () => ({
+            defaultServiceKey: 'openai_chatgpt',
+            services,
             service: {
-              serviceKey: 'openai_chatgpt',
-              displayName: 'OPENAI (ChatGPT)',
+              ...service,
               bindWhitelistIso2: ['US'],
             },
             providers: [
@@ -27,42 +49,40 @@ describe('App', () => {
 
       if (String(url).startsWith('/api/compare')) {
         compareCalls += 1;
-        const payload = compareCalls > 1
-          ? {
-              rows: [
+        const requestUrl = new URL(String(url), 'http://localhost');
+        const serviceKey = requestUrl.searchParams.get('service') || 'openai_chatgpt';
+        const countryIso2 = serviceKey === 'paypal' ? 'GB' : 'US';
+        const countryName = serviceKey === 'paypal' ? 'United Kingdom' : 'United States';
+        const payload = {
+          rows: [
+            {
+              countryIso2,
+              countryName,
+              providerCount: 1,
+              inventoryTotal: 9,
+              minPriceUsd: 0.11,
+              minPriceOriginal: 0.11,
+              cheapestCurrency: 'USD',
+              lastFetchedAt: '2026-05-27T12:00:00.000Z',
+              offers: [
                 {
-                  countryIso2: 'US',
-                  countryName: 'United States',
-                  providerCount: 1,
-                  inventoryTotal: 9,
-                  minPriceUsd: 0.11,
+                  providerKey: 'smsbower',
+                  providerName: 'SMSBower',
+                  status: 'in_stock',
+                  currency: 'USD',
                   minPriceOriginal: 0.11,
-                  cheapestCurrency: 'USD',
+                  minPriceUsd: 0.11,
+                  inventoryTotal: 9,
                   lastFetchedAt: '2026-05-27T12:00:00.000Z',
-                  offers: [
-                    {
-                      providerKey: 'smsbower',
-                      providerName: 'SMSBower',
-                      status: 'in_stock',
-                      currency: 'USD',
-                      minPriceOriginal: 0.11,
-                      minPriceUsd: 0.11,
-                      inventoryTotal: 9,
-                      lastFetchedAt: '2026-05-27T12:00:00.000Z',
-                      tiers: [{ priceOriginal: 0.11, priceUsd: 0.11, stock: 9, providerRef: '' }],
-                      errorMessage: '',
-                    },
-                  ],
+                  tiers: [{ priceOriginal: 0.11, priceUsd: 0.11, stock: 9, providerRef: '' }],
+                  errorMessage: '',
                 },
               ],
-              countries: [{ iso2: 'US', name: 'United States' }],
-              updatedAt: '2026-05-27T12:00:00.000Z',
-            }
-          : {
-              rows: [],
-              countries: [],
-              updatedAt: '2026-05-27T12:00:00.000Z',
-            };
+            },
+          ],
+          countries: [{ iso2: countryIso2, name: countryName, displayName: countryName }],
+          updatedAt: '2026-05-27T12:00:00.000Z',
+        };
 
         return {
           ok: true,
@@ -93,6 +113,14 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /目前推荐国家\(自测\)/i }));
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('mode=recommended'));
+    });
+
+    fireEvent.click(screen.getByRole('tab', { name: 'PayPal' }));
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('service=paypal'));
+    });
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('mode=all'));
     });
   });
 });

@@ -4,8 +4,127 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 
+const LEGACY_SERVICE_KEY = 'openai_chatgpt';
+
+const PROVIDER_SNAPSHOTS_SQL = `
+  CREATE TABLE IF NOT EXISTS provider_snapshots (
+    service_key TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (service_key, provider_key)
+  );
+`;
+
+const PROVIDER_STATES_SQL = `
+  CREATE TABLE IF NOT EXISTS provider_states (
+    service_key TEXT NOT NULL,
+    provider_key TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_attempted_at TEXT NOT NULL,
+    last_success_at TEXT,
+    error_message TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (service_key, provider_key)
+  );
+`;
+
 function ensureParentDir(filePath) {
   fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true });
+}
+
+function getTableInfo(db, tableName) {
+  return db.prepare(`PRAGMA table_info(${tableName})`).all();
+}
+
+function getPrimaryKeyColumns(tableInfo) {
+  return tableInfo
+    .filter((column) => Number(column.pk || 0) > 0)
+    .sort((left, right) => Number(left.pk) - Number(right.pk))
+    .map((column) => column.name);
+}
+
+function createTableSqlWithoutIfNotExists(sql) {
+  return sql.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TABLE');
+}
+
+function migrateProviderSnapshotsIfNeeded(db) {
+  const tableInfo = getTableInfo(db, 'provider_snapshots');
+  if (!tableInfo.length) {
+    db.exec(PROVIDER_SNAPSHOTS_SQL);
+    return;
+  }
+
+  const pkColumns = getPrimaryKeyColumns(tableInfo);
+  if (pkColumns.join(',') === 'service_key,provider_key') return;
+
+  const columnNames = new Set(tableInfo.map((column) => column.name));
+  const serviceKeyExpression = columnNames.has('service_key') ? 'service_key' : `'${LEGACY_SERVICE_KEY}'`;
+
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE provider_snapshots RENAME TO provider_snapshots_legacy');
+    db.exec(createTableSqlWithoutIfNotExists(PROVIDER_SNAPSHOTS_SQL));
+    db.exec(`
+      INSERT OR REPLACE INTO provider_snapshots (service_key, provider_key, payload_json, fetched_at)
+      SELECT ${serviceKeyExpression}, provider_key, payload_json, fetched_at
+      FROM provider_snapshots_legacy
+    `);
+    db.exec('DROP TABLE provider_snapshots_legacy');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function migrateProviderStatesIfNeeded(db) {
+  const tableInfo = getTableInfo(db, 'provider_states');
+  if (!tableInfo.length) {
+    db.exec(PROVIDER_STATES_SQL);
+    return;
+  }
+
+  const pkColumns = getPrimaryKeyColumns(tableInfo);
+  if (pkColumns.join(',') === 'service_key,provider_key') return;
+
+  const columnNames = new Set(tableInfo.map((column) => column.name));
+  const serviceKeyExpression = columnNames.has('service_key') ? 'service_key' : `'${LEGACY_SERVICE_KEY}'`;
+
+  db.exec('BEGIN');
+  try {
+    db.exec('ALTER TABLE provider_states RENAME TO provider_states_legacy');
+    db.exec(createTableSqlWithoutIfNotExists(PROVIDER_STATES_SQL));
+    db.exec(`
+      INSERT OR REPLACE INTO provider_states (
+        service_key,
+        provider_key,
+        status,
+        last_attempted_at,
+        last_success_at,
+        error_message
+      )
+      SELECT
+        ${serviceKeyExpression},
+        provider_key,
+        status,
+        last_attempted_at,
+        last_success_at,
+        error_message
+      FROM provider_states_legacy
+    `);
+    db.exec('DROP TABLE provider_states_legacy');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+function ensureProviderTables(db) {
+  db.exec(PROVIDER_SNAPSHOTS_SQL);
+  db.exec(PROVIDER_STATES_SQL);
+  migrateProviderSnapshotsIfNeeded(db);
+  migrateProviderStatesIfNeeded(db);
 }
 
 function createDatabase(databasePath) {
@@ -18,20 +137,6 @@ function createDatabase(databasePath) {
       service_key TEXT PRIMARY KEY,
       payload_json TEXT NOT NULL,
       updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_snapshots (
-      provider_key TEXT PRIMARY KEY,
-      payload_json TEXT NOT NULL,
-      fetched_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS provider_states (
-      provider_key TEXT PRIMARY KEY,
-      status TEXT NOT NULL,
-      last_attempted_at TEXT NOT NULL,
-      last_success_at TEXT,
-      error_message TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS exchange_rates (
@@ -48,6 +153,7 @@ function createDatabase(databasePath) {
       details_json TEXT NOT NULL DEFAULT '{}'
     );
   `);
+  ensureProviderTables(db);
 
   return db;
 }
@@ -71,34 +177,71 @@ function getServiceConfig(db, serviceKey) {
   return row ? JSON.parse(row.payload_json) : null;
 }
 
-function saveProviderSnapshot(db, providerKey, payload) {
+function normalizeProviderSnapshotArgs(serviceKey, providerKey, payload) {
+  if (payload === undefined) {
+    return {
+      serviceKey: LEGACY_SERVICE_KEY,
+      providerKey: serviceKey,
+      payload: providerKey,
+    };
+  }
+  return { serviceKey, providerKey, payload };
+}
+
+function saveProviderSnapshot(db, serviceKey, providerKey, payload) {
+  const args = normalizeProviderSnapshotArgs(serviceKey, providerKey, payload);
   const fetchedAt = new Date().toISOString();
   db.prepare(`
-    INSERT INTO provider_snapshots (provider_key, payload_json, fetched_at)
-    VALUES (@provider_key, @payload_json, @fetched_at)
-    ON CONFLICT(provider_key) DO UPDATE SET
+    INSERT INTO provider_snapshots (service_key, provider_key, payload_json, fetched_at)
+    VALUES (@service_key, @provider_key, @payload_json, @fetched_at)
+    ON CONFLICT(service_key, provider_key) DO UPDATE SET
       payload_json = excluded.payload_json,
       fetched_at = excluded.fetched_at
   `).run({
-    provider_key: providerKey,
-    payload_json: JSON.stringify(payload),
+    service_key: args.serviceKey,
+    provider_key: args.providerKey,
+    payload_json: JSON.stringify(args.payload),
     fetched_at: fetchedAt,
   });
   return fetchedAt;
 }
 
-function getProviderSnapshot(db, providerKey) {
-  const row = db.prepare('SELECT payload_json, fetched_at FROM provider_snapshots WHERE provider_key = ?').get(providerKey);
+function normalizeProviderLookupArgs(serviceKey, providerKey) {
+  if (providerKey === undefined) {
+    return {
+      serviceKey: LEGACY_SERVICE_KEY,
+      providerKey: serviceKey,
+    };
+  }
+  return { serviceKey, providerKey };
+}
+
+function getProviderSnapshot(db, serviceKey, providerKey) {
+  const args = normalizeProviderLookupArgs(serviceKey, providerKey);
+  const row = db.prepare(`
+    SELECT service_key, provider_key, payload_json, fetched_at
+    FROM provider_snapshots
+    WHERE service_key = ? AND provider_key = ?
+  `).get(args.serviceKey, args.providerKey);
   if (!row) return null;
   return {
+    serviceKey: row.service_key,
+    providerKey: row.provider_key,
     payload: JSON.parse(row.payload_json),
     fetchedAt: row.fetched_at,
   };
 }
 
-function getAllProviderSnapshots(db) {
-  const rows = db.prepare('SELECT provider_key, payload_json, fetched_at FROM provider_snapshots').all();
+function getAllProviderSnapshots(db, serviceKey = '') {
+  const rows = serviceKey
+    ? db.prepare(`
+      SELECT service_key, provider_key, payload_json, fetched_at
+      FROM provider_snapshots
+      WHERE service_key = ?
+    `).all(serviceKey)
+    : db.prepare('SELECT service_key, provider_key, payload_json, fetched_at FROM provider_snapshots').all();
   return rows.map((row) => ({
+    serviceKey: row.service_key,
     providerKey: row.provider_key,
     payload: JSON.parse(row.payload_json),
     fetchedAt: row.fetched_at,
@@ -107,23 +250,40 @@ function getAllProviderSnapshots(db) {
 
 function saveProviderState(db, state) {
   db.prepare(`
-    INSERT INTO provider_states (provider_key, status, last_attempted_at, last_success_at, error_message)
-    VALUES (@provider_key, @status, @last_attempted_at, @last_success_at, @error_message)
-    ON CONFLICT(provider_key) DO UPDATE SET
+    INSERT INTO provider_states (service_key, provider_key, status, last_attempted_at, last_success_at, error_message)
+    VALUES (@service_key, @provider_key, @status, @last_attempted_at, @last_success_at, @error_message)
+    ON CONFLICT(service_key, provider_key) DO UPDATE SET
       status = excluded.status,
       last_attempted_at = excluded.last_attempted_at,
       last_success_at = excluded.last_success_at,
       error_message = excluded.error_message
-  `).run(state);
+  `).run({
+    service_key: state.service_key || LEGACY_SERVICE_KEY,
+    provider_key: state.provider_key,
+    status: state.status,
+    last_attempted_at: state.last_attempted_at,
+    last_success_at: state.last_success_at,
+    error_message: state.error_message || '',
+  });
 }
 
-function getAllProviderStates(db) {
-  const rows = db.prepare('SELECT * FROM provider_states').all();
+function getAllProviderStates(db, serviceKey = '') {
+  const rows = serviceKey
+    ? db.prepare('SELECT * FROM provider_states WHERE service_key = ?').all(serviceKey)
+    : db.prepare('SELECT * FROM provider_states').all();
   const map = new Map();
   for (const row of rows) {
     map.set(row.provider_key, row);
   }
   return map;
+}
+
+function getProviderState(db, serviceKey, providerKey) {
+  return db.prepare(`
+    SELECT *
+    FROM provider_states
+    WHERE service_key = ? AND provider_key = ?
+  `).get(serviceKey || LEGACY_SERVICE_KEY, providerKey);
 }
 
 function saveExchangeRates(db, baseCurrency, payload) {
@@ -184,6 +344,7 @@ module.exports = {
   getAllProviderStates,
   getExchangeRates,
   getLatestRefreshEvent,
+  getProviderState,
   getProviderSnapshot,
   getServiceConfig,
   insertRefreshEvent,

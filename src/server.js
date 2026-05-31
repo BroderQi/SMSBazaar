@@ -2,7 +2,7 @@
 
 require('dotenv').config();
 
-const serviceConfig = require('./config/service-config');
+const serviceRegistry = require('./config/service-config');
 const { createApp } = require('./app');
 const { createDatabase, upsertServiceConfig } = require('./lib/db');
 const { createExchangeRateService } = require('./lib/exchange-rates');
@@ -16,7 +16,9 @@ const exchangeRateUrl = process.env.EXCHANGE_RATE_URL || 'https://api.frankfurte
 
 async function bootstrap() {
   const db = createDatabase(databasePath);
-  upsertServiceConfig(db, serviceConfig);
+  for (const serviceConfig of serviceRegistry.getServiceConfigs()) {
+    upsertServiceConfig(db, serviceConfig);
+  }
 
   const exchangeRateService = createExchangeRateService({
     db,
@@ -26,7 +28,7 @@ async function bootstrap() {
   const refreshController = createRefreshController({
     db,
     exchangeRateService,
-    serviceConfig,
+    serviceConfig: serviceRegistry,
     refreshCooldownMs,
   });
 

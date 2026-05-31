@@ -2,7 +2,7 @@
 
 const express = require('express');
 const path = require('node:path');
-const serviceConfig = require('./config/service-config');
+const serviceRegistry = require('./config/service-config');
 const { aggregateByCountry } = require('./lib/aggregator');
 const { loadOpenAiSupportedCountries } = require('./lib/openai-supported-country-config');
 const { loadRecommendedCountryConfig } = require('./lib/recommended-country-config');
@@ -14,6 +14,21 @@ const {
   upsertServiceConfig,
 } = require('./lib/db');
 
+function getServiceModes(serviceConfig) {
+  return Array.isArray(serviceConfig.modes) && serviceConfig.modes.length
+    ? serviceConfig.modes
+    : [{ value: 'all', label: 'All countries', description: 'All countries returned by providers' }];
+}
+
+function getServiceSummary(serviceConfig) {
+  return {
+    serviceKey: serviceConfig.serviceKey,
+    displayName: serviceConfig.displayName,
+    defaultMode: serviceConfig.defaultMode || 'all',
+    modes: getServiceModes(serviceConfig),
+  };
+}
+
 function createApp({ db, refreshController }) {
   const app = express();
   app.use(express.json());
@@ -23,7 +38,29 @@ function createApp({ db, refreshController }) {
   const refreshIntervalMs = Number(process.env.REFRESH_INTERVAL_MS || 60000);
   const exposeProviderErrors = String(process.env.EXPOSE_PROVIDER_ERRORS || '').toLowerCase() === 'true';
 
-  upsertServiceConfig(db, serviceConfig);
+  for (const serviceConfig of serviceRegistry.getServiceConfigs()) {
+    upsertServiceConfig(db, serviceConfig);
+  }
+
+  function resolveService(serviceKey) {
+    return serviceRegistry.getServiceConfig(String(serviceKey || serviceRegistry.defaultServiceKey || '').trim());
+  }
+
+  function resolveMode(serviceConfig, requestedMode) {
+    const modes = getServiceModes(serviceConfig).map((mode) => mode.value);
+    const candidate = String(requestedMode || serviceConfig.defaultMode || 'all');
+    if (modes.includes(candidate)) return candidate;
+    return serviceConfig.defaultMode || modes[0] || 'all';
+  }
+
+  function getRegisterSupportedCountries(serviceConfig) {
+    if (serviceConfig.serviceKey === 'openai_chatgpt') {
+      return loadOpenAiSupportedCountries(openAiSupportedCountriesFilePath);
+    }
+    return {
+      whitelist: serviceConfig.registerSupportedWhitelistIso2 || [],
+    };
+  }
 
   function redactProviderError(message) {
     if (exposeProviderErrors) return message || '';
@@ -41,20 +78,25 @@ function createApp({ db, refreshController }) {
   }
 
   app.get('/api/meta', (req, res) => {
+    const serviceConfig = resolveService(req.query.service);
     const latestRefresh = getLatestRefreshEvent(db);
-    const states = getAllProviderStates(db);
-    const snapshots = new Map(getAllProviderSnapshots(db).map((snapshot) => [snapshot.providerKey, snapshot]));
+    const states = getAllProviderStates(db, serviceConfig.serviceKey);
+    const snapshots = new Map(getAllProviderSnapshots(db, serviceConfig.serviceKey).map((snapshot) => [snapshot.providerKey, snapshot]));
     const usdRates = getExchangeRates(db, 'USD');
     const recommendationConfig = loadRecommendedCountryConfig(recommendationFilePath, serviceConfig.recommendedWhitelistIso2);
-    const openAiSupportedCountries = loadOpenAiSupportedCountries(openAiSupportedCountriesFilePath);
+    const registerSupportedCountries = getRegisterSupportedCountries(serviceConfig);
 
     res.json({
+      defaultServiceKey: serviceRegistry.defaultServiceKey,
+      services: serviceRegistry.getServiceConfigs().map(getServiceSummary),
       service: {
         serviceKey: serviceConfig.serviceKey,
         displayName: serviceConfig.displayName,
+        defaultMode: serviceConfig.defaultMode || 'all',
+        modes: getServiceModes(serviceConfig),
         bindWhitelistIso2: serviceConfig.bindWhitelistIso2,
         recommendedWhitelistIso2: recommendationConfig.whitelist,
-        registerSupportedWhitelistIso2: openAiSupportedCountries.whitelist,
+        registerSupportedWhitelistIso2: registerSupportedCountries.whitelist,
       },
       display: {
         primaryCurrency: 'CNY',
@@ -87,20 +129,20 @@ function createApp({ db, refreshController }) {
   });
 
   app.get('/api/compare', (req, res) => {
+    const serviceConfig = resolveService(req.query.service);
     const filters = {
-      mode: ['bind', 'recommended'].includes(String(req.query.mode))
-        ? String(req.query.mode)
-        : 'register',
+      service: serviceConfig.serviceKey,
+      mode: resolveMode(serviceConfig, req.query.mode),
       country: req.query.country || '',
       provider: req.query.provider || '',
       status: req.query.status || '',
       sort: req.query.sort || 'price_asc',
     };
 
-    const snapshots = getAllProviderSnapshots(db);
-    const providerStates = getAllProviderStates(db);
+    const snapshots = getAllProviderSnapshots(db, serviceConfig.serviceKey);
+    const providerStates = getAllProviderStates(db, serviceConfig.serviceKey);
     const recommendationConfig = loadRecommendedCountryConfig(recommendationFilePath, serviceConfig.recommendedWhitelistIso2);
-    const openAiSupportedCountries = loadOpenAiSupportedCountries(openAiSupportedCountriesFilePath);
+    const registerSupportedCountries = getRegisterSupportedCountries(serviceConfig);
     const rows = redactCompareRows(aggregateByCountry({
       snapshots,
       states: providerStates,
@@ -108,7 +150,7 @@ function createApp({ db, refreshController }) {
       whitelist: serviceConfig.bindWhitelistIso2,
       recommendedWhitelist: recommendationConfig.whitelist,
       recommendationPathByIso2: recommendationConfig.pathByIso2,
-      openAiSupportedWhitelist: openAiSupportedCountries.whitelist,
+      registerSupportedWhitelist: registerSupportedCountries.whitelist,
     }));
 
     const countries = rows.map((row) => ({
